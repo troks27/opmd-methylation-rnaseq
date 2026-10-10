@@ -65,6 +65,7 @@ When `gse204943_objects` points to a frozen copy outside `<out>`, stage 01 is no
 | `01_results_audit.R` | stage 02-04 outputs, `<gse>` | **`<ext>/audit.rds`**; `audit_checks.csv` (key claims: reported vs recomputed, status `confirmed` or `CHECK`), `audit_gse26549_forest_exact_ci.csv`; OPL score gap, mixture BIC and dip test |
 | `02_cohort_verification.R` | stage 02-04 outputs, `<gse>` | **`verification_kzfp_cpg_accounting.csv`**; Mumbai OPL outcome by group (Supplementary Table 2), sex-adjusted signature, HPV-negative subset, tumour-only PMD blocks, GSE227919 subsets |
 | `03_manuscript_numbers.R` | audit, verification and stage 02-05 outputs | **`manuscript_numbers.csv`**: every number quoted in the text (section, statement, value), formatted as in the text |
+| `04_gse204943_integrity.R` | stage 01 objects (incl. `intermediate/`), GEO series matrix and file list, signature, pilot betas | **`integrity_gse204943_summary.csv`** (check, result, pass / note / FAIL / info), `integrity_gse204943_samples.csv`: deposited files, labels vs GEO, detection failures, sex from X/Y data, duplicate individuals (SNP probes), profile vs group, signature robustness to doubtful OSCCs |
 
 ## 07 Figures
 

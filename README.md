@@ -67,7 +67,7 @@ flowchart LR
 | 03 | `scripts/03_methylation_cohorts` | `cohorts` | Composition-adjusted tumour signature and tumour-likeness score; OPL methylome groups; Mumbai same-patient cross-checks; GSE234379 and the 19q13 KZFP cluster |
 | 04 | `scripts/04_expression_outcome` | `outcome` | GSE227919 programmes and grade; methylome-state expression proxy and oral cancer development in GSE26549 |
 | 05 | `scripts/05_pilot_rnaseq` | `kallisto`, `rnaseq` | kallisto quantification; tximport gene matrices; RNA vs methylation readouts; paired DE, hallmarks, promoter methylation vs expression |
-| 06 | `scripts/06_audit` | `audit` | Results audit of key claims, cohort verification checks, and the table of every number quoted in the text |
+| 06 | `scripts/06_audit` | `audit` | Results audit of key claims, cohort verification checks, the table of every number quoted in the text, and GSE204943 integrity checks (files and labels vs GEO, sex, duplicates) |
 | 07 | `scripts/07_figures` | `figures` | Nature-format figures (183 mm wide, PDF + PNG) |
 
 `docs/pipeline.md` lists the inputs and outputs of each script. `docs/outputs_map.md`

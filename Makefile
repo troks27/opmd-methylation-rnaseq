@@ -52,6 +52,7 @@ RNASTORY     := $(EXT)/rnaseq_story.rds
 AUDIT        := $(EXT)/audit.rds
 VERIFY       := $(EXT)/tables/verification_kzfp_cpg_accounting.csv
 NUMBERS      := $(EXT)/tables/manuscript_numbers.csv
+INTEGRITY    := $(EXT)/tables/integrity_gse204943_summary.csv
 FIG1_4       := $(FIGDIR)/Fig1.pdf
 FIG5_6       := $(FIGDIR)/Fig5.pdf
 
@@ -133,13 +134,16 @@ $(RNASTORY): $(S)/05_pilot_rnaseq/04_rna_analyses.R $(MATRICES) $(PROCESSED) $(E
 	$(R) $<
 
 # ------------------------------------------------------------------ 06 audit
-audit: $(AUDIT) $(VERIFY) $(NUMBERS)
+audit: $(AUDIT) $(VERIFY) $(NUMBERS) $(INTEGRITY)
 $(AUDIT): $(S)/06_audit/01_results_audit.R $(EXTMETH) $(STORY) $(MUMBAI) $(KZFP3) $(G26549) $(CNV) $(LIB)
 	$(R) $<
 $(VERIFY): $(S)/06_audit/02_cohort_verification.R $(EXTMETH) $(STORY) $(KZFP3) $(G26549) $(PROCESSED) $(LIB)
 	$(R) $<
 
 $(NUMBERS): $(S)/06_audit/03_manuscript_numbers.R $(AUDIT) $(VERIFY) $(RNASTORY) $(RNAVALID) $(LIB)
+	$(R) $<
+
+$(INTEGRITY): $(S)/06_audit/04_gse204943_integrity.R $(EXTMETH) $(PROCESSED) $(GSE_OBJ) $(GSE_CNV_DEP) $(LIB)
 	$(R) $<
 
 # ------------------------------------------------------------------ 07 figures

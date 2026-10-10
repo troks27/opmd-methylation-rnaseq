@@ -9,7 +9,7 @@ Nothing in this folder is tracked by git except this file. Data locations are se
 
 | Accession | Files |
 |---|---|
-| GSE204943 | GEO sample sheet and `GSE204943_RAW.tar` (IDATs, extracted to `data/geo/GSE204943/idat/`) |
+| GSE204943 | GEO sample sheet and `GSE204943_RAW.tar` (IDATs, extracted to `data/geo/GSE204943/idat/`); series matrix and `filelist.txt` (sample metadata and deposited file list, for the integrity audit) |
 | GSE85514, GSE85195, GSE26549 | series matrices; platform tables GPL22311 and GPL6480 |
 | GSE234379 | series matrix and normalised beta values |
 | GSE227919 | expression matrix and sample annotation (`data/geo/GSE227919/`) |

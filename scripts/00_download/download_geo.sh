@@ -43,10 +43,13 @@ get "$GEO/GPL6480.annot.txt"  "${ACC}GPL6480"  7aa299582ebf8b653e4af097696ba447
 get "$G227/GSE227919_2023_20_03_expr_mat_raw.txt.gz"     "$FTP/series/GSE227nnn/GSE227919/suppl/GSE227919_2023_20_03_expr_mat_raw.txt.gz"     887f7933c94116fa27c3b65441edc58f
 get "$G227/GSE227919_2023_21_03_pml_annotations.csv.gz"  "$FTP/series/GSE227nnn/GSE227919/suppl/GSE227919_2023_21_03_pml_annotations.csv.gz"  f93be2362cac3f14cc5c531e34550f91
 
-## GSE204943: sample sheet + IDAT archive (only needed for stage 01)
+## GSE204943: sample sheet + IDAT archive (stage 01); GEO sample metadata and file list
+## (06_audit/04_gse204943_integrity.R)
 G2=$(dirname "$GIDAT")
 get "$G2/GSE204943_Sample_sheet_118_samples_MBM_MI_modified.csv.gz" \
     "$FTP/series/GSE204nnn/GSE204943/suppl/GSE204943_Sample_sheet_118_samples_MBM_MI_modified.csv.gz" -
+get "$G2/GSE204943_series_matrix.txt.gz" "$FTP/series/GSE204nnn/GSE204943/matrix/GSE204943_series_matrix.txt.gz" 675df351df3db19d1698ef6a0f56b061
+get "$G2/GSE204943_filelist.txt"         "$FTP/series/GSE204nnn/GSE204943/suppl/filelist.txt"                   4dc59ddfece2029e61caffd76b6ac167
 if [ -z "$(ls "$GIDAT"/*_Grn.idat* 2>/dev/null | head -1)" ]; then
   get "$G2/GSE204943_RAW.tar" "$FTP/series/GSE204nnn/GSE204943/suppl/GSE204943_RAW.tar" -
   echo "extract  GSE204943_RAW.tar -> $GIDAT"

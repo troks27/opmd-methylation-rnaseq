@@ -140,6 +140,24 @@ older `Methylation_sections_NatCommun.md`. Both .docx files were rebuilt, and th
 replaced with the repository versions. The previous text and figures are in
 `analysis/output/figures_nature/archive_pre_repo_rerun_2026-10-09/`.
 
+### GSE204943 integrity audit (added 9 Oct 2026)
+
+`06_audit/04_gse204943_integrity.R` checks the stage-01 objects against GEO and the data
+themselves.
+- **Files:** the 236 IDATs are exactly those GEO lists, and the RAW archive is byte-identical
+  to GEO's. GEO's README mentions 4 replicate IDATs; they were never uploaded.
+- **Labels:** all 118 samples match GEO's name, group and sex through the IDAT barcode.
+- **Quality:** detection failures are at most 0.58% per array.
+- **Identity:** no individual appears twice (SNP-probe concordance at most 0.66).
+- **Notes:**
+  - OSCC OC1331 is recorded female, both in GEO and in the sample sheet, but both X/Y signals
+    indicate male. It also has 7.6% epithelium and no copy-number changes.
+  - Three arrays have median log2 intensity below 10.5 (N46, OC1560, OC2202), but all have low
+    detection failure rates.
+- **Robustness:** re-deriving the signature without OC1331, or without the four OSCCs that score
+  in the healthy range (OC1440, OC1331, OC1418, OC1965), leaves all 22 OPL groups unchanged.
+  Pilot shifts move by at most 0.04.
+
 ### Open points for the authors
 
 - `ZNF667-AS1` is counted among the "19q13 KZFPs" by the symbol rule (prefix ZNF), but it is an
