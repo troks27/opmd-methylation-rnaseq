@@ -1,0 +1,13 @@
+# Copy to config/paths.local.yml (git-ignored) and edit. Only the entries you set
+# here override config/paths.yml. Absolute paths and ~ are allowed.
+#
+# Example: data kept outside the repository and a frozen copy of the GSE204943
+# objects from an earlier run.
+#
+# geo: ~/data/opmd/geo
+# gse227919: ~/data/opmd/geo/GSE227919
+# gse204943_objects: ~/data/opmd/gse204943_objects
+# gse204943_idat: ~/data/opmd/geo/GSE204943/idat
+# pilot_idat_dir: ~/data/opmd/pilot/IJGA_Oral Leukoplakia_x8_IDATs_4-28-26
+# pilot_sample_sheet: ~/data/opmd/pilot/IJGA_Oral Leukoplakia_x8_4-28-26/IJGA_Oral Leukoplakia_x8_4-28-26.csv
+# kallisto_index: ~/data/reference/gencode_v50.kallisto.idx

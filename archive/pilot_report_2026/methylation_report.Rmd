@@ -1,0 +1,865 @@
+---
+title: "Oral Precancer → Cancer Methylation Continuum (EPIC v2)"
+author: "Methylation analysis"
+date: "`r format(Sys.Date())`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    code_folding: hide
+    theme: cosmo
+    df_print: paged
+    fig_width: 7
+    fig_height: 5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, message = FALSE, warning = FALSE,
+  fig.path = "output/figures/", dev = "png", dpi = 110,
+  cache.path = "output/cache/", autodep = TRUE
+)
+options(width = 110)
+
+suppressPackageStartupMessages({
+  library(sesame)
+  library(sesameData)
+  library(minfi)              # only used for read.metharray.sheet/MDS-ish bits
+  library(limma)
+  library(DMRcate)
+  library(IlluminaHumanMethylationEPICv2anno.20a1.hg38)
+  library(tidyverse)
+  library(pheatmap)
+  library(ggrepel)
+  library(EpiDISH)
+})
+
+source("R/01_sample_sheet.R")
+source("R/utils.R")
+
+phen_cols <- c(Normal = "#1f78b4", Lesion = "#ff7f00", Tumor = "#e31a1c")
+
+PROJECT_ROOT <- normalizePath("..")
+CSV_PATH     <- file.path(PROJECT_ROOT,
+                  "IJGA_Oral Leukoplakia_x8_4-28-26",
+                  "IJGA_Oral Leukoplakia_x8_4-28-26.csv")
+IDAT_DIR     <- file.path(PROJECT_ROOT,
+                  "IJGA_Oral Leukoplakia_x8_IDATs_4-28-26")
+OUT_DIR      <- "output"
+TBL_DIR      <- file.path(OUT_DIR, "tables")
+EXT_DIR      <- file.path(OUT_DIR, "extended")   # written by R/10-12 (see render.R)
+dir.create(TBL_DIR, recursive = TRUE, showWarnings = FALSE)
+```
+
+# Cohort
+
+```{r cohort}
+ss <- build_sample_sheet(CSV_PATH, IDAT_DIR)
+ss
+```
+
+`r nrow(ss)` samples on a single EPIC v2 chip. The design is patient-paired:
+formal differential analysis is the **paired Normal vs Lesion** test (n = 3
+pairs); the single tumor sample is shown descriptively against that background.
+
+# 1. Read & normalize with sesame
+
+```{r normalize, cache = TRUE}
+sesameDataCacheAll()        # one-time; idempotent
+
+prefixes <- setNames(ss$Basename, ss$Sample_Name)
+
+## SigDF list — keep for QC and SNP/sex inference
+sdfs <- openSesame(prefixes, platform = "EPICv2", func = NULL,
+                   BPPARAM = BiocParallel::SerialParam())
+
+## Normalized betas (CpG x sample), with pOOBAH masking + noob + dye-bias
+betas <- openSesame(sdfs, func = getBetas)
+colnames(betas) <- ss$Sample_Name
+dim(betas)
+```
+
+# 2. QC
+
+```{r qc-stats}
+## inferSex() takes betas (sesame >= 1.2x); passing the SigDF errored and
+## silently returned NA for every sample in the first version of this report.
+safe_sex <- function(s) {
+  tryCatch(as.character(inferSex(getBetas(s), platform = "EPICv2")),
+           error = function(e) NA_character_)
+}
+qc <- do.call(rbind, lapply(seq_along(sdfs), function(i) {
+  s <- sdfs[[i]]
+  data.frame(
+    Sample              = ss$Sample_Name[i],
+    Group               = as.character(ss$Group[i]),
+    Patient             = ss$Patient[i],
+    Unmasked_fraction   = round(mean(!is.na(getBetas(s))), 4),   # pOOBAH + design/quality masks
+    pOOBAH_pass_rate    = round(mean(pOOBAH(s, return.pval = TRUE) < 0.05, na.rm = TRUE), 4),
+    Mean_intensity      = round(meanIntensity(s), 1),
+    Inferred_sex        = safe_sex(s),
+    stringsAsFactors    = FALSE
+  )
+}))
+qc
+write.csv(qc, file.path(TBL_DIR, "qc_summary.csv"), row.names = FALSE)
+```
+
+```{r qc-density, fig.cap="Beta density per sample (post-normalization)"}
+df_dens <- as.data.frame(betas) |>
+  rownames_to_column("CpG") |>
+  pivot_longer(-CpG, names_to = "Sample", values_to = "Beta") |>
+  filter(!is.na(Beta)) |>
+  left_join(ss[, c("Sample_Name","Group","Patient")], by = c("Sample" = "Sample_Name"))
+
+ggplot(df_dens, aes(Beta, colour = Sample, linetype = Group)) +
+  geom_density(linewidth = 0.4, na.rm = TRUE) +
+  scale_colour_viridis_d() +
+  theme_bw(base_size = 10) +
+  labs(x = expression(beta), y = "density")
+```
+
+# 3. Probe filtering
+
+```{r filter, cache = TRUE}
+## (a) drop probes masked in > 25% of samples
+frac_na <- rowMeans(is.na(betas))
+betas_keep <- betas[frac_na <= 0.25, , drop = FALSE]
+
+## (b) drop chrX/chrY (sex annotated as Unknown for all samples)
+manifest <- sesameData_getManifestGRanges("EPICv2")
+auto     <- names(manifest)[as.character(seqnames(manifest)) %in% paste0("chr", 1:22)]
+betas_keep <- betas_keep[rownames(betas_keep) %in% auto, , drop = FALSE]
+
+## Two parallel matrices:
+##   betas_u  — uncollapsed (EPIC v2 IlmnID with _BC11/_TC21 suffix). Needed by DMRcate.
+##   betas_f  — collapsed to one β per CpG. Used for DMPs / PCA / heatmaps / trajectories.
+betas_u <- betas_keep[complete.cases(betas_keep), , drop = FALSE]
+betas_f <- betasCollapseToPfx(betas_keep)
+betas_f <- betas_f[complete.cases(betas_f), , drop = FALSE]
+
+cat(sprintf("Probes after filtering — uncollapsed: %d, collapsed: %d (of %d original)\n",
+            nrow(betas_u), nrow(betas_f), nrow(betas)))
+
+mvals   <- beta_to_m(betas_f)
+mvals_u <- beta_to_m(betas_u)
+```
+
+# 4. Exploratory — all 8 samples
+
+```{r pca, fig.cap="PCA of top-5000 most variable CpGs (β-values)"}
+n_top <- 5000
+v <- matrixStats::rowVars(betas_f)
+top <- order(v, decreasing = TRUE)[seq_len(min(n_top, length(v)))]
+pca <- prcomp(t(betas_f[top, ]), scale. = FALSE)
+
+pct <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
+pca_df <- as.data.frame(pca$x[, 1:3]) |>
+  rownames_to_column("Sample") |>
+  left_join(ss, by = c("Sample" = "Sample_Name"))
+
+ggplot(pca_df, aes(PC1, PC2, colour = Group, shape = Patient, label = Sample)) +
+  geom_point(size = 4) +
+  geom_text_repel(size = 3, max.overlaps = 20, show.legend = FALSE) +
+  scale_colour_manual(values = c(Normal = "#1f78b4",
+                                 Lesion = "#ff7f00",
+                                 Tumor  = "#e31a1c")) +
+  labs(x = sprintf("PC1 (%s%%)", pct[1]),
+       y = sprintf("PC2 (%s%%)", pct[2])) +
+  theme_bw(base_size = 11)
+```
+
+```{r corr-heatmap, fig.cap="Sample-sample Pearson correlation on top-variable CpGs"}
+cor_mat <- cor(betas_f[top, ], use = "pairwise.complete.obs")
+ann <- data.frame(Group = ss$Group, Patient = ss$Patient,
+                  row.names = ss$Sample_Name)
+pheatmap(cor_mat, annotation_col = ann, annotation_row = ann,
+         display_numbers = TRUE, number_format = "%.3f", fontsize = 8)
+```
+
+## 4b. What drives PC1? Tissue composition
+
+Bulk oral biopsies differ greatly in epithelial, stromal and immune content.
+EpiDISH (RPC, epithelial/fibroblast/immune reference; the same method used for
+GSE204943) estimates these fractions from the methylation data itself.
+
+```{r pca-composition, fig.width=6, fig.height=4.2}
+data(centEpiFibIC.m)
+cell_frac <- epidish(beta.m = betas_f, ref.m = centEpiFibIC.m, method = "RPC")$estF
+comp_df <- data.frame(Sample = rownames(cell_frac), round(cell_frac, 3),
+                      PC1 = round(pca$x[rownames(cell_frac), 1], 1)) |>
+  left_join(ss[, c("Sample_Name", "Group", "Patient")], by = c("Sample" = "Sample_Name"))
+comp_df
+write.csv(comp_df, file.path(TBL_DIR, "cell_composition_epidish.csv"), row.names = FALSE)
+r_pc1_epi <- cor(comp_df$PC1, comp_df$Epi)
+
+ggplot(comp_df, aes(Epi, PC1, colour = Group, shape = Patient)) +
+  geom_point(size = 3.5) +
+  geom_text_repel(aes(label = Sample), size = 2.6, show.legend = FALSE) +
+  scale_colour_manual(values = phen_cols) +
+  labs(x = "Epithelial fraction (EpiDISH)", y = "PC1 of the all-sample PCA",
+       title = sprintf("PC1 vs epithelial fraction: r = %.2f", r_pc1_epi)) +
+  theme_bw(base_size = 10)
+```
+
+**PC1 is mostly a tissue-composition axis** (r = `r round(r_pc1_epi, 2)` with
+epithelial fraction). Samples that sit "near the tumour" on PC1 are the
+immune/stroma-rich ones (the PVL lesion is the most immune-rich sample, in line
+with its lymphoid-dominant Xenium composition). PC1 position therefore cannot be
+read as malignant potential; section 11 gives a composition-adjusted continuum.
+
+# 5. Differential methylation — paired Normal vs Lesion
+
+```{r dmp, cache = TRUE}
+paired_patients <- c("Patient 3", "Patient 4", "Patient 5")
+keep <- ss$Patient %in% paired_patients & ss$Group %in% c("Normal", "Lesion")
+ss_p <- droplevels(ss[keep, ])
+M_p  <- mvals[, ss_p$Sample_Name]
+
+Group   <- factor(as.character(ss_p$Group), levels = c("Normal", "Lesion"))
+Patient <- factor(ss_p$Patient)
+
+design <- model.matrix(~ 0 + Group + Patient)
+colnames(design) <- make.names(colnames(design))
+contrasts <- makeContrasts(LesionVsNormal = GroupLesion - GroupNormal,
+                           levels = design)
+
+fit  <- lmFit(M_p, design)
+fit2 <- contrasts.fit(fit, contrasts)
+fit2 <- eBayes(fit2, robust = TRUE, trend = TRUE)
+
+dmp <- topTable(fit2, coef = "LesionVsNormal",
+                number = Inf, sort.by = "P", adjust.method = "BH")
+
+## annotate with delta-beta and nearest gene
+B_p <- betas_f[, ss_p$Sample_Name]
+mean_lesion <- rowMeans(B_p[, ss_p$Group == "Lesion"], na.rm = TRUE)
+mean_normal <- rowMeans(B_p[, ss_p$Group == "Normal"], na.rm = TRUE)
+dmp$delta_beta <- mean_lesion[rownames(dmp)] - mean_normal[rownames(dmp)]
+
+## EPIC v2 anno's Name carries a replicate suffix (e.g. cg25324105_BC11);
+## our DMP rownames are the collapsed CpG IDs (no suffix). Strip and dedupe.
+anno_v2 <- minfi::getAnnotation(IlluminaHumanMethylationEPICv2anno.20a1.hg38)
+anno_v2$cpg <- sub("_[^_]+$", "", anno_v2$Name)
+anno_v2 <- anno_v2[!duplicated(anno_v2$cpg), , drop = FALSE]
+m <- match(rownames(dmp), anno_v2$cpg)
+dmp$chr  <- anno_v2$chr[m]
+dmp$pos  <- anno_v2$pos[m]
+dmp$gene <- anno_v2$UCSC_RefGene_Name[m]
+dmp$gene <- vapply(strsplit(dmp$gene, ";"), function(x) {
+  if (length(x) == 0) NA_character_ else paste(unique(x), collapse = ";")
+}, character(1))
+dmp$relation_to_island <- anno_v2$Relation_to_Island[m]
+
+write.csv(dmp, file.path(TBL_DIR, "dmp_lesion_vs_normal.csv"))
+head(dmp[, c("logFC","delta_beta","P.Value","adj.P.Val","chr","pos","gene","relation_to_island")], 25)
+```
+
+```{r volcano, fig.cap="Volcano: paired Lesion vs Normal"}
+vd <- dmp |>
+  mutate(sig = case_when(
+    adj.P.Val < 0.05 & delta_beta >  0.1 ~ "hyper",
+    adj.P.Val < 0.05 & delta_beta < -0.1 ~ "hypo",
+    TRUE                                  ~ "ns"
+  ))
+
+ggplot(vd, aes(delta_beta, -log10(P.Value), colour = sig)) +
+  geom_point(alpha = 0.5, size = 0.8) +
+  scale_colour_manual(values = c(hyper = "#e31a1c", hypo = "#1f78b4", ns = "grey70")) +
+  geom_vline(xintercept = c(-0.1, 0.1), linetype = "dashed", colour = "grey50") +
+  geom_hline(yintercept = -log10(0.05),  linetype = "dashed", colour = "grey50") +
+  labs(x = expression(Delta*beta~"(Lesion - Normal)"),
+       y = expression(-log[10]~P), colour = NULL) +
+  theme_bw(base_size = 11)
+```
+
+# 6. DMRs — DMRcate (paired Normal vs Lesion)
+
+> **Read these as exploratory candidate regions, not significant DMRs.** With
+> n = 3 pairs no single CpG passes FDR (minimum adjusted P is shown in the
+> table above), and `cpg.annotate()` is run at a permissive FDR of 0.5 so that
+> DMRcate has CpGs to build regions from. The resulting smoothed "FDR" values
+> do not carry their nominal meaning. Section 6b checks the top candidates
+> against the independent GSE204943 cohort.
+
+```{r dmrs, cache = TRUE}
+## DMRcate needs uncollapsed EPIC v2 IlmnIDs (with _BC11/_TC21 suffix).
+M_u_p <- mvals_u[, ss_p$Sample_Name]
+
+## Use a permissive cpg.annotate FDR (n=3 pairs has limited single-CpG power);
+## DMRcate's regional smoothing recovers signal that single-CpG FDR misses.
+myanno <- cpg.annotate(
+  object       = M_u_p,
+  datatype     = "array",
+  what         = "M",
+  arraytype    = "EPICv2",
+  analysis.type = "differential",
+  design       = design,
+  contrasts    = TRUE,
+  cont.matrix  = contrasts,
+  coef         = "LesionVsNormal",
+  fdr          = 0.5
+)
+
+## Try strict default first; fall back to a raw p-value cutoff if nothing passes.
+run_dmrcate <- function() {
+  out <- tryCatch(dmrcate(myanno, lambda = 1000, C = 2),
+                  error = function(e) e)
+  if (inherits(out, "error")) {
+    msg <- conditionMessage(out)
+    if (grepl("no significant CpGs|no DMRs", msg)) {
+      message("No DMRs at default cutoff; retrying with pcutoff = 1e-3.")
+      out <- tryCatch(dmrcate(myanno, lambda = 1000, C = 2, pcutoff = 1e-3),
+                      error = function(e) e)
+    }
+  }
+  if (inherits(out, "error")) {
+    message("dmrcate failed: ", conditionMessage(out)); return(NULL)
+  }
+  out
+}
+
+dmrs <- run_dmrcate()
+
+if (!is.null(dmrs)) {
+  dmr_ranges <- extractRanges(dmrs, genome = "hg38")
+  dmr_df <- as.data.frame(dmr_ranges)
+  write.csv(dmr_df, file.path(TBL_DIR, "dmrs_lesion_vs_normal.csv"),
+            row.names = FALSE)
+  cat(sprintf("DMRs found: %d\n", length(dmr_ranges)))
+  head(dmr_df, 25)
+}
+```
+
+```{r dmr-plot, fig.width=9, fig.height=7, eval=exists("dmr_ranges") && length(dmr_ranges) > 0}
+## Top-3 candidate regions (by Fisher P) across ALL 8 samples, so the tumour
+## overlays. Drawn offline: DMRcate::DMR.plot needs an Ensembl connection
+## (and, in v1 of this report, was also given collapsed CpG IDs and errored).
+top3 <- dmr_ranges[order(dmr_ranges$Fisher)][1:min(3, length(dmr_ranges))]
+reg_df <- do.call(rbind, lapply(seq_along(top3), function(i) {
+  r <- top3[i]
+  sel <- anno_v2$chr == as.character(GenomicRanges::seqnames(r)) &
+    anno_v2$pos >= GenomicRanges::start(r) - 2000 & anno_v2$pos <= GenomicRanges::end(r) + 2000
+  cps <- intersect(anno_v2$cpg[sel], rownames(betas_f))
+  if (length(cps) == 0) return(NULL)
+  d <- as.data.frame(betas_f[cps, , drop = FALSE])
+  d$pos <- anno_v2$pos[match(cps, anno_v2$cpg)]
+  d <- pivot_longer(d, -pos, names_to = "Sample", values_to = "Beta")
+  d$region <- sprintf("%s:%d-%d  %s", GenomicRanges::seqnames(r), GenomicRanges::start(r),
+                      GenomicRanges::end(r), substr(r$overlapping.genes, 1, 30))
+  d
+}))
+reg_df <- left_join(reg_df, ss[, c("Sample_Name", "Group", "Patient")], by = c("Sample" = "Sample_Name"))
+ggplot(reg_df, aes(pos / 1e3, Beta, colour = Group, group = Sample)) +
+  geom_line(linewidth = 0.4) + geom_point(size = 1) +
+  facet_wrap(~region, scales = "free_x", ncol = 1) +
+  scale_colour_manual(values = phen_cols) + ylim(0, 1) +
+  labs(x = "Position (kb, hg38)", y = expression(beta)) +
+  theme_bw(base_size = 10)
+```
+
+## 6b. Do the top candidate regions replicate externally?
+
+For each of the 30 strongest candidate regions (by Fisher P): the mean
+lesion-minus-own-adjacent Δβ in each pilot patient, and the external Δβ
+(OPL − normal, tumour − normal) in GSE204943 over the same CpGs.
+
+```{r dmr-replication, eval = exists("dmr_ranges") && length(dmr_ranges) > 0 && file.exists(file.path(EXT_DIR, "gse_signature.rds"))}
+sig_ext <- readRDS(file.path(EXT_DIR, "gse_signature.rds"))
+top_dmr <- dmr_ranges[order(dmr_ranges$Fisher)][1:min(30, length(dmr_ranges))]
+anno_gr2 <- GenomicRanges::GRanges(anno_v2$chr, IRanges::IRanges(anno_v2$pos, width = 1), cpg = anno_v2$cpg)
+pairs_d <- sapply(c("Patient 2", "Patient 3", "Patient 4", "Patient 5"), function(pt) {
+  les <- ss$Sample_Name[ss$Patient == pt & ss$Group != "Normal"]
+  adj <- ss$Sample_Name[ss$Patient == pt & ss$Group == "Normal"]
+  betas_f[, les] - betas_f[, adj]
+})
+dmr_rep <- do.call(rbind, lapply(seq_along(top_dmr), function(i) {
+  cps <- intersect(anno_gr2$cpg[S4Vectors::subjectHits(GenomicRanges::findOverlaps(top_dmr[i], anno_gr2))],
+                   rownames(betas_f))
+  e <- sig_ext[sig_ext$cpg %in% cps, ]
+  data.frame(region = sprintf("%s:%d-%d", GenomicRanges::seqnames(top_dmr[i]),
+                              GenomicRanges::start(top_dmr[i]), GenomicRanges::end(top_dmr[i])),
+             genes = substr(top_dmr$overlapping.genes[i], 1, 40), n_cpg = length(cps),
+             t(round(colMeans(pairs_d[cps, , drop = FALSE]), 3)),
+             GSE_OPL_minus_N = round(mean(e$d_OvN), 3), GSE_T_minus_N = round(mean(e$d_TvN), 3),
+             check.names = FALSE)
+}))
+names(dmr_rep)[4:7] <- c("d_P2_tumor", "d_P3", "d_P4", "d_P5")
+dmr_rep$replicates_GSE_tumor <- sign(dmr_rep$GSE_T_minus_N) == sign(rowMeans(dmr_rep[, c("d_P3", "d_P4", "d_P5")])) &
+  abs(dmr_rep$GSE_T_minus_N) > 0.05
+write.csv(dmr_rep, file.path(TBL_DIR, "dmr_candidates_external_replication.csv"), row.names = FALSE)
+dmr_rep
+```
+
+# 7. Tumor in context (descriptive)
+
+## 7a. PCA with tumor projected
+
+```{r pca-tumor, fig.cap="PCA built on Normal+Lesion only; tumor projected on top"}
+nl_idx <- ss$Group %in% c("Normal", "Lesion")
+top_nl <- order(matrixStats::rowVars(betas_f[, nl_idx]), decreasing = TRUE)[1:n_top]
+pca_nl <- prcomp(t(betas_f[top_nl, nl_idx]), scale. = FALSE)
+proj_t <- predict(pca_nl, t(betas_f[top_nl, !nl_idx, drop = FALSE]))
+
+nl_df <- data.frame(PC1 = pca_nl$x[, 1], PC2 = pca_nl$x[, 2],
+                    Sample = colnames(betas_f)[nl_idx])
+t_df  <- data.frame(PC1 = proj_t[, 1], PC2 = proj_t[, 2],
+                    Sample = colnames(betas_f)[!nl_idx])
+p_df  <- dplyr::bind_rows(nl_df, t_df) |>
+  left_join(ss, by = c("Sample" = "Sample_Name"))
+
+pct_nl <- round(100 * pca_nl$sdev^2 / sum(pca_nl$sdev^2), 1)
+
+ggplot(p_df, aes(PC1, PC2, colour = Group, shape = Patient)) +
+  geom_point(size = 4) +
+  geom_text_repel(aes(label = Sample), size = 3, show.legend = FALSE) +
+  scale_colour_manual(values = phen_cols) +
+  labs(x = sprintf("PC1 (%s%%)", pct_nl[1]),
+       y = sprintf("PC2 (%s%%)", pct_nl[2])) +
+  theme_bw(base_size = 11)
+```
+
+## 7b. Heatmap of top 500 paired DMPs across all 8 samples
+
+```{r heatmap-top500, fig.width=8, fig.height=8}
+top500 <- head(rownames(dmp), 500)
+mat    <- betas_f[top500, ]
+ann    <- data.frame(Group = ss$Group, Patient = ss$Patient,
+                     row.names = ss$Sample_Name)
+ann_colours <- list(
+  Group   = phen_cols,
+  Patient = setNames(RColorBrewer::brewer.pal(max(3, length(unique(ss$Patient))), "Set2"),
+                     unique(ss$Patient))
+)
+pheatmap(mat,
+         annotation_col       = ann,
+         annotation_colors    = ann_colours,
+         show_rownames        = FALSE,
+         clustering_distance_rows = "correlation",
+         clustering_distance_cols = "correlation",
+         color = colorRampPalette(c("#1f78b4","white","#e31a1c"))(100),
+         fontsize = 8)
+```
+
+## 7c. CpG-level continuum trajectories
+
+For each of the top paired DMPs, plot β across {Normal, Lesion, Tumor},
+with grey lines connecting same-patient measurements and the tumor sample
+visible as the rightmost point.
+
+```{r trajectories, fig.width=10, fig.height=8}
+top_for_traj <- head(rownames(dmp), 12)
+plots <- lapply(top_for_traj, function(cg) {
+  g <- dmp[cg, "gene"]
+  plot_cpg_trajectory(cg, betas_f, ss, gene = g)
+})
+patchwork::wrap_plots(plots, ncol = 4)
+```
+
+# 8. Polycomb (PRC2) target enrichment + CIMP-style score
+
+The top DMRs sit on HOX clusters and KRAB-ZNF arrays — the canonical
+Polycomb-target / CGI hypermethylation signature seen in HNSCC and oral
+cancer. This section tests whether the *whole* DMR list is enriched for
+PRC2 targets, and computes a per-sample CIMP-PRC2 β score so the
+Normal → Lesion → Tumor trajectory can be read off one figure.
+
+```{r prc2-load, cache = TRUE}
+suppressPackageStartupMessages({
+  library(missMethyl); library(msigdbr); library(org.Hs.eg.db)
+})
+
+m_cgp <- msigdbr(species = "Homo sapiens", collection = "C2", subcollection = "CGP")
+prc2_genes <- list(
+  PRC2_targets       = unique(m_cgp$gene_symbol[m_cgp$gs_name == "BENPORATH_PRC2_TARGETS"]),
+  SUZ12_targets      = unique(m_cgp$gene_symbol[m_cgp$gs_name == "BENPORATH_SUZ12_TARGETS"]),
+  EED_targets        = unique(m_cgp$gene_symbol[m_cgp$gs_name == "BENPORATH_EED_TARGETS"]),
+  ES_with_H3K27me3   = unique(m_cgp$gene_symbol[m_cgp$gs_name == "BENPORATH_ES_WITH_H3K27ME3"])
+)
+sapply(prc2_genes, length)
+```
+
+## 8a. Hypergeometric enrichment of DMR-overlapping genes for PRC2 targets
+
+```{r prc2-enrich}
+universe_genes <- unique(unlist(strsplit(na.omit(dmp$gene), ";")))
+universe_genes <- universe_genes[nzchar(universe_genes)]
+
+dmp_sig <- dmp[!is.na(dmp$P.Value) & dmp$P.Value < 1e-4 &
+                 abs(dmp$delta_beta) > 0.1, ]
+hit_genes <- unique(unlist(strsplit(na.omit(dmp_sig$gene), ";")))
+hit_genes <- hit_genes[nzchar(hit_genes)]
+
+prc2_test <- function(gene_set, hits, universe) {
+  k <- sum(hits     %in% gene_set)
+  K <- sum(universe %in% gene_set)
+  n <- length(hits)
+  N <- length(universe)
+  data.frame(
+    set         = NA_character_,
+    set_size    = K,
+    hits_in_set = k,
+    hits_total  = n,
+    universe    = N,
+    expected    = round(n * K / N, 1),
+    fold        = round((k / n) / (K / N), 2),
+    p_hyper     = phyper(k - 1, K, N - K, n, lower.tail = FALSE)
+  )
+}
+prc2_table <- do.call(rbind, lapply(names(prc2_genes), function(nm) {
+  out <- prc2_test(prc2_genes[[nm]], hit_genes, universe_genes)
+  out$set <- nm; out
+}))
+prc2_table$adj_p <- p.adjust(prc2_table$p_hyper, method = "BH")
+prc2_table
+write.csv(prc2_table, file.path(TBL_DIR, "prc2_enrichment.csv"), row.names = FALSE)
+```
+
+```{r prc2-gsameth, cache = TRUE, cache.lazy = FALSE}
+## More rigorous: array-bias-corrected CpG-level enrichment via missMethyl::gsameth.
+## Requires uncollapsed EPIC v2 IlmnIDs.
+sig_cpg_collapsed <- rownames(dmp_sig)
+all_cpg_collapsed <- rownames(dmp)
+
+## Map collapsed CpG IDs back to all v2 IlmnIDs that share that prefix.
+expand_to_v2 <- function(cpg_collapsed, anno) {
+  prefix <- sub("_[^_]+$", "", anno$Name)
+  anno$Name[prefix %in% cpg_collapsed]
+}
+sig_v2 <- expand_to_v2(sig_cpg_collapsed, anno_v2)
+all_v2 <- expand_to_v2(all_cpg_collapsed, anno_v2)
+
+prc2_collections <- lapply(prc2_genes, function(symbols) {
+  ids <- mapIds(org.Hs.eg.db, keys = symbols, column = "ENTREZID",
+                keytype = "SYMBOL", multiVals = "first")
+  ids[!is.na(ids)]
+})
+
+prc2_gsa <- gsameth(
+  sig.cpg    = sig_v2,
+  all.cpg    = all_v2,
+  collection = prc2_collections,
+  array.type = "EPIC_V2"
+)
+prc2_gsa$set <- rownames(prc2_gsa)
+prc2_gsa <- prc2_gsa[, c("set","N","DE","P.DE","FDR")]
+prc2_gsa
+write.csv(prc2_gsa, file.path(TBL_DIR, "prc2_gsameth.csv"), row.names = FALSE)
+```
+
+## 8b. CIMP-PRC2 score per sample
+
+For every CpG that (i) is in a CpG island and (ii) maps to a
+BENPORATH_PRC2_TARGETS gene, compute the per-sample mean β. Plot the
+Normal → Lesion → Tumor trajectory.
+
+```{r cimp-prc2}
+anno_v2_cpg <- anno_v2  # already deduped to one row per collapsed CpG
+anno_v2_cpg$gene_first <- sub(";.*", "", anno_v2_cpg$UCSC_RefGene_Name)
+
+prc2_panel <- anno_v2_cpg$cpg[
+  anno_v2_cpg$Relation_to_Island == "Island" &
+  anno_v2_cpg$gene_first %in% prc2_genes$PRC2_targets
+]
+prc2_panel <- intersect(prc2_panel, rownames(betas_f))
+length(prc2_panel)
+
+cimp_score <- colMeans(betas_f[prc2_panel, ], na.rm = TRUE)
+cimp_df <- data.frame(
+  Sample = names(cimp_score),
+  CIMP_PRC2 = as.numeric(cimp_score)
+) |> left_join(ss, by = c("Sample" = "Sample_Name"))
+cimp_df
+
+ggplot(cimp_df, aes(Group, CIMP_PRC2, group = Patient, colour = Group)) +
+  geom_line(colour = "grey60", aes(group = Patient)) +
+  geom_point(size = 4) +
+  geom_text_repel(aes(label = Patient), size = 3, show.legend = FALSE) +
+  scale_colour_manual(values = phen_cols, guide = "none") +
+  labs(y = "Mean β at PRC2-target CGI CpGs",
+       x = NULL,
+       title = sprintf("CIMP-PRC2 score (panel: %d CpGs)", length(prc2_panel))) +
+  theme_bw(base_size = 11)
+```
+
+# 9. Field effect in the adjacent tissue
+
+The first version of this section averaged β over the top-1000 paired DMPs.
+That mixed hyper- and hypomethylated CpGs (which cancel), and it re-used DMPs
+selected on the very adjacent samples being judged (circular). It is replaced
+by the externally defined, composition-adjusted tumour signature from
+GSE204943 (section 11), scored separately for hyper- and hypomethylated CpGs:
+0 = GSE204943 normal mean, 1 = GSE204943 tumour mean.
+
+```{r field-defect-external, eval = file.exists(file.path(EXT_DIR, "tables/tumor_likeness_pilot.csv"))}
+fd_ext <- read.csv(file.path(EXT_DIR, "tables/tumor_likeness_pilot.csv"))
+fd_ext[, c("Sample", "Group", "Epi", "hyper", "hypo", "tumor_likeness", "delta_vs_own_adj")]
+write.csv(fd_ext, file.path(TBL_DIR, "field_defect_summary.csv"), row.names = FALSE)
+```
+
+Three of four adjacent samples score at or below the external normal range.
+**P3-Adj (PVL patient) scores 0.63, as tumour-like as the lesions,** with
+tumour-level hypermethylation, PMD erosion and a focal *CDKN2A* deletion
+(section 12), and it scores higher than its own lesion. This is either field
+involvement of the PVL "adjacent" mucosa or a lesion/adjacent label exchange.
+The genotype check (section 12) rules out a swap between patients but cannot
+tell P3's two samples apart; the histology of the exact tissue submitted for
+the array should be reviewed.
+
+# 10. DMR genomic-context breakdown + GO/KEGG enrichment
+
+## 10a. Where do DMRs land?
+
+```{r dmr-context, eval = exists("dmr_ranges") && length(dmr_ranges) > 0}
+dmr_df_ctx <- as.data.frame(dmr_ranges) |>
+  mutate(Direction = ifelse(meandiff > 0, "Hyper (Lesion>Normal)", "Hypo  (Lesion<Normal)"))
+
+## map each DMR to its dominant CGI context by intersecting with anno_v2 CpGs
+dmr_gr <- dmr_ranges
+anno_gr <- GenomicRanges::GRanges(
+  seqnames = anno_v2$chr,
+  ranges   = IRanges::IRanges(anno_v2$pos, width = 1),
+  cgi      = anno_v2$Relation_to_Island
+)
+ov <- GenomicRanges::findOverlaps(dmr_gr, anno_gr)
+ctx_per_dmr <- tapply(anno_gr$cgi[S4Vectors::subjectHits(ov)],
+                      S4Vectors::queryHits(ov),
+                      function(x) names(sort(table(x), decreasing = TRUE))[1])
+dmr_df_ctx$cgi_context <- NA_character_
+dmr_df_ctx$cgi_context[as.integer(names(ctx_per_dmr))] <- unlist(ctx_per_dmr)
+
+ctx_tab <- dmr_df_ctx |> count(Direction, cgi_context)
+ggplot(ctx_tab, aes(cgi_context, n, fill = Direction)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(values = c("#e31a1c","#1f78b4")) +
+  labs(x = "CpG-island relation", y = "DMR count", fill = NULL,
+       title = "DMR distribution by CpG-island context") +
+  theme_bw(base_size = 11)
+```
+
+## 10b. GO + KEGG enrichment via missMethyl::gometh (EPIC v2)
+
+```{r gometh, cache = TRUE, cache.lazy = FALSE}
+sig_v2_strict <- expand_to_v2(rownames(dmp_sig), anno_v2)
+all_v2_full   <- expand_to_v2(rownames(dmp),     anno_v2)
+
+go_res <- gometh(sig.cpg = sig_v2_strict, all.cpg = all_v2_full,
+                 collection = "GO", array.type = "EPIC_V2")
+kegg_res <- gometh(sig.cpg = sig_v2_strict, all.cpg = all_v2_full,
+                   collection = "KEGG", array.type = "EPIC_V2")
+
+go_top   <- topGSA(go_res,   number = 25)
+kegg_top <- topGSA(kegg_res, number = 25)
+write.csv(go_top,   file.path(TBL_DIR, "go_enrichment.csv"))
+write.csv(kegg_top, file.path(TBL_DIR, "kegg_enrichment.csv"))
+go_top
+kegg_top
+```
+
+# 11. External anchoring — GSE204943 (EPIC v1; 22 normal, 22 OPL, 74 OSCC)
+
+Produced by `R/11_external_methylation.R`.
+
+```{r ext-load, eval = file.exists(file.path(EXT_DIR, "external_methylation.rds"))}
+ext <- readRDS(file.path(EXT_DIR, "external_methylation.rds"))
+```
+
+The pilot and GSE204943 share `r if (exists("ext")) format(ext$n_common, big.mark = ",")`
+CpGs. Per-CpG mean β of the pilot adjacent tissue and GSE204943 normals
+correlate at r = `r if (exists("ext")) round(ext$conc_r, 3)`, so the cohorts are
+directly comparable despite the different pipelines (sesame noob vs minfi noob).
+
+## 11a. A reproducible normal-to-tumour continuum (replaces manuscript Fig. 3B)
+
+The tumour signature is learned in GSE204943 alone: limma on M-values, tumour
+vs normal, **adjusted for epithelial and immune fraction and array plate**
+(top 2,000 hyper- and 2,000 hypomethylated CpGs, FDR < 1e-6, |Δβ| > 0.2).
+Each sample is scored per CpG as its position between the GSE204943 normal
+mean (0) and tumour mean (1); the median is taken separately over hyper and
+hypo CpGs and the two are averaged. GSE204943 OPL samples were not used to
+pick CpGs, so their distribution is an out-of-sample reference.
+
+```{r ext-continuum, out.width = "90%", eval = exists("ext")}
+knitr::include_graphics(file.path(EXT_DIR, "figures/continuum_external.png"))
+ext$sc_p |> mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+  select(Sample, histology, Epi, hyper, hypo, tumor_likeness, delta_vs_own_adj, purity_scaled)
+```
+
+In GSE204943 normals the score does not move with epithelial fraction
+(lower panel), so composition alone does not generate it. Against their own
+adjacent tissue, P4 (atypical hyperplasia), P5 (moderate–severe dysplasia,
+later progressed) and the P2 tumour all shift strongly toward the tumour
+state; P5's lesion scores the same as the tumour. The P3 pair runs the other
+way (section 9). `purity_scaled` divides by the GSE204943 tumour trend at the
+same epithelial fraction (secondary metric; extrapolates at very low Epi).
+
+## 11b. Pilot projected into the GSE204943 methylation space
+
+```{r ext-pca, out.width = "80%", eval = exists("ext")}
+knitr::include_graphics(file.path(EXT_DIR, "figures/pca_projection_gse204943.png"))
+```
+
+## 11c. Does each pilot lesion recapitulate the external tumour program?
+
+Correlation, over the 4,000 signature CpGs, between the pilot
+lesion-minus-own-adjacent Δβ and the GSE204943 tumour-minus-normal Δβ.
+
+```{r ext-replication, eval = exists("ext")}
+ext$rep_tab |> mutate(across(where(is.numeric), ~ round(.x, 3)))
+ext$cons_sum |> mutate(across(where(is.numeric), ~ round(.x, 3)))
+```
+
+The second table takes CpGs that move > 0.1 in the same direction in all three
+OPL pairs and asks how often they replicate (same direction, P < 0.05) in
+GSE204943, against all other CpGs as background.
+
+## 11d. PMD erosion and ZNF471 promoter methylation (the two GSE204943 programs)
+
+PMD erosion = mean β of open-sea CpGs inside the GSE204943 tumour-hypomethylated
+PMD blocks minus outside them (more negative = more eroded). Spearman with the
+published GSE204943 per-sample PMD erosion score:
+`r if (exists("ext")) round(ext$r_pmd, 2)` (sign reversed by construction).
+
+```{r ext-pmd, out.width = "75%", eval = exists("ext")}
+knitr::include_graphics(file.path(EXT_DIR, "figures/pmd_znf471.png"))
+ext$pz_p |> mutate(across(where(is.numeric), ~ round(.x, 3)))
+```
+
+## 11e. Promoter methylation of genes named in the manuscript
+
+CGI/shore TSS-proximal CpGs, or all TSS200/TSS1500 CpGs for genes without a
+CGI promoter. `d_Pn` = lesion/tumour minus own adjacent.
+
+```{r ext-genes, eval = exists("ext")}
+ext$gene_tab |> select(gene, n_cpg, cpg_type, GSE_Normal, GSE_OPL, GSE_Tumor, d_P2, d_P3, d_P4, d_P5) |>
+  mutate(across(where(is.double), ~ round(.x, 3)))
+```
+
+# 12. Copy number from the methylation array
+
+Produced by `R/10_sigdf_qc_cnv.R`. Total probe intensity (noob, dye-bias
+corrected, masked probes removed) is fitted against a reference
+(conumee-style), binned at 50 probes and segmented with CBS (DNAcopy). Two
+references: **LPO** = median of the *other* patients' adjacent tissue (detects
+field events shared by a patient's adjacent and lesion); **paired** = the
+patient's own adjacent (cancels germline CNVs and patient-specific signal
+artefacts). HOX/ZIC clusters, whose intensity tracks methylation, are excluded,
+and the GC-wave-prone terminal 5 Mb of each chromosome is not used for calls.
+
+## 12a. Identity and sex
+
+```{r cnv-identity, eval = file.exists(file.path(EXT_DIR, "cnv_objects.rds"))}
+cnv <- readRDS(file.path(EXT_DIR, "cnv_objects.rds"))
+round(cnv$conc, 2)       # genotype concordance, 65 rs probes
+cnv$qc2
+```
+
+Each lesion matches its own adjacent tissue (0.95–1.00) and no other patient
+(0.31–0.48): no sample swap between patients. All eight samples are female
+(sesame inferSex; chrX β ~0.6, chrY intensity at background).
+
+## 12b. Genome-wide profiles
+
+```{r cnv-genome, out.width = "100%", eval = exists("cnv")}
+knitr::include_graphics(file.path(EXT_DIR, "figures/cnv_genome_LPO.png"))
+```
+
+```{r cnv-arms, eval = exists("cnv")}
+cnv$arms |> filter(call != "") |>
+  select(Sample, arm_label, LPO, paired, call, paired_confirmed, field_shared) |>
+  mutate(across(c(LPO, paired), ~ round(.x, 3)))
+```
+
+## 12c. 9p21.3 (*CDKN2A*/*MTAP*)
+
+```{r cnv-9p21, out.width = "75%", eval = exists("cnv")}
+knitr::include_graphics(file.path(EXT_DIR, "figures/cnv_9p21_zoom.png"))
+cnv$del9 |> mutate(across(where(is.numeric), ~ round(.x, 3)))
+```
+
+A deep focal deletion spanning *MTAP*–*CDKN2A*–*CDKN2B* (~21.6–22.2 Mb) is
+present in P5-Lesion, P4-Lesion (not P4-Adj) and P3-Adj; in those samples the
+region also has 1.6–2.4× the genome-wide pOOBAH failure rate, as expected for
+a homozygous deletion in part of the cells. *CDKN2A* promoter methylation is
+unchanged in these lesions (11e), so p16 is lost by deletion, not silencing.
+
+## 12d. Regions named in manuscript Fig. 2
+
+```{r cnv-fig2, eval = exists("cnv")}
+read.csv(file.path(EXT_DIR, "tables/cnv_fig2_regions_LPO.csv"), check.names = FALSE) |>
+  select(-start, -end)
+read.csv(file.path(EXT_DIR, "tables/gene_cytobands_hg38.csv"))
+```
+
+# 13. External transcriptomic test — GSE227919
+
+Produced by `R/12_external_rnaseq.R`. 66 leukoplakia biopsies (Control =
+leukoplakia without dysplasia, HkNR, dysplasia, cancer); 25 non-cancer lesions
+have follow-up (10 progressed to dysplasia or SCC). Program scores are the
+mean per-gene z-score of log2(normalised count + 1). Trend = Spearman with
+histologic class; progression = AUC (bootstrap 95% CI) and a logistic model
+adjusted for histologic class.
+
+```{r rna-tests, eval = file.exists(file.path(EXT_DIR, "external_rnaseq.rds"))}
+rna <- readRDS(file.path(EXT_DIR, "external_rnaseq.rds"))
+rna$res |> select(set, n_genes, trend_rho, trend_fdr, prog_AUC, prog_AUC_lo, prog_AUC_hi,
+                  prog_wilcox_p, prog_fdr, prog_p_adj_class) |>
+  mutate(across(where(is.numeric), ~ signif(.x, 2)))
+```
+
+Histologic class alone gives AUC = `r if (exists("rna")) round(rna$hist_auc, 2)` for progression.
+
+```{r rna-figs, out.width = "90%", eval = exists("rna")}
+knitr::include_graphics(file.path(EXT_DIR, "figures/rnaseq_programs_by_class.png"))
+knitr::include_graphics(file.path(EXT_DIR, "figures/rnaseq_programs_progression.png"))
+```
+
+# 14. Methods audit (October 2026)
+
+| Item | Problem in v1 | Change |
+|---|---|---|
+| Sex inference | `inferSex()` given a SigDF; errored, NA for all samples | Pass betas; all 8 female |
+| Detection rate | Counted design/quality masks as failures | pOOBAH rate reported separately |
+| PCA / manuscript Fig. 3A | PC1 read as malignancy; r = 0.90 with epithelial fraction | EpiDISH added; composition-adjusted external continuum (11a) |
+| Manuscript Fig. 3B | Hand-drawn curve, not derivable from the PCA, no method | Replaced by 11a (fully specified, external anchor) |
+| DMRs | 8,090 "DMRs" built at cpg.annotate FDR 0.5; no CpG passes FDR | Labelled exploratory; top candidates checked in GSE204943 (6b) |
+| PRC2 / GO enrichment | Hit list from nominal P < 1e-4 | Labelled exploratory; per-sample CIMP-PRC2 score unaffected |
+| Field-defect score | Mean β mixed hyper and hypo CpGs; DMPs selected on the same samples | External signed signature (section 9) |
+| Copy number | Not assessed on the array | Added (section 12); checks WES/XHMM calls |
+
+# 15. Save processed object
+
+```{r save}
+processed <- list(
+  betas        = betas_f,
+  mvals        = mvals,
+  sample_sheet = ss,
+  dmp_table    = dmp,
+  dmr_ranges   = if (exists("dmr_ranges")) dmr_ranges else NULL,
+  pca          = pca,
+  pca_nl       = pca_nl,
+  qc           = qc,
+  session      = sessionInfo()
+)
+saveRDS(processed, file.path(OUT_DIR, "processed.rds"))
+```
+
+# 16. Caveats
+
+* **n = 1 tumor.** Any tumor-involving comparison is descriptive only;
+  p-values are reported only for the paired Normal vs Lesion contrast.
+* **Single chip / single row position per sample.** Row-position effects
+  cannot be modeled because every sample is on a different row.
+* **Bulk tissue.** Epithelial fraction ranges from 0.10 to 0.86 across the
+  eight samples and drives the unsupervised structure (section 4b). Use the
+  composition-adjusted external score (section 11) for any malignancy claim.
+* **External cohort.** GSE204943 is a gingivobuccal, largely tobacco-chewing
+  Indian cohort on EPIC v1; the pilot is EPIC v2. Paired (lesion minus own
+  adjacent) quantities are the most robust to the platform/population offset.
+* **P3 labels.** P3-Adj looks more neoplastic than P3-Lesion on methylation and
+  copy number; confirm against the histology of the submitted tissue.
+
+```{r session}
+sessionInfo()
+```

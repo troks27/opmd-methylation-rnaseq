@@ -1,0 +1,11 @@
+event,sample,arms,direction,array,exome,rna,note
+P5 MSD†: 3p loss,P5-Lesion,3p,loss,Detected,Detected,,array: 02_identity_sex_copy_number.R; exome: multimodal manuscript (unpublished) Fig. 2; RNA: arm dosage vs noise floor
+P5 MSD†: 9p21 deletion,P5-Lesion,,loss,Detected,Detected,Detected,RNA: MTAP/CDKN2A/CDKN2B below own adjacent tissue (Fig. 5e)
+P5 MSD†: 13q loss,P5-Lesion,13q,loss,Detected,Detected,,
+P4 Adj: chr12 gain,P4-Adj,12p;12q,gain,Detected,Detected,,
+P4 AH: chr12 gain,P4-Lesion,12p;12q,gain,Detected,Detected,,
+P4 AH: 9p21 deletion,P4-Lesion,,loss,Detected,Not detected,Detected,RNA: MTAP/CDKN2A/CDKN2B below own adjacent tissue (Fig. 5e)
+P3 Adj: 9p21 deletion,P3-Adj,,loss,Detected,Not detected,Not assessed,no RNA library for P3 adjacent tissue
+P2 OSCC: chr20 gain,P2-Tumor,20p;20q,gain,Detected,Not detected,,
+P2 OSCC: 4q loss,P2-Tumor,4q,loss,Detected,Not detected,,
+P2 OSCC: 9p loss,P2-Tumor,9p,loss,Detected,Not detected,,

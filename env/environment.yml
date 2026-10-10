@@ -1,0 +1,13 @@
+# Command-line tools outside R (versions used for the published results).
+#   conda env create -f env/environment.yml && conda activate opmd-tools
+# R 4.5.2 / Bioconductor 3.22 packages are pinned separately in env/renv.lock.
+name: opmd-tools
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - kallisto=0.52.0       # pilot RNA-seq pseudoalignment (scripts/05_pilot_rnaseq)
+  - pandoc=3.9            # manuscript .docx build (tools/build_manuscript_docx.py)
+  - python=3.12
+  - python-docx=1.2.0
+  - make
