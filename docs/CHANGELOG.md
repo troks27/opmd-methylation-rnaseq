@@ -1,5 +1,62 @@
 # Changelog
 
+## 2026-10-10 Methods document; corrections to the nulls, seeds and P-value labels
+
+### Methods document and its enforcement
+
+- `docs/methods.md` describes every script: procedure, parameters, software and statistics.
+  Its table "Values that come from the data" quotes data-derived values (group boundary, noise
+  floor, block counts, etc.) as they appear in `manuscript_numbers.csv`.
+- `tools/check_methods_doc.py` checks that every analysis script is described (`coverage`) and
+  that the quoted values match the current results (`values`). `make methods-check` runs both,
+  and is part of `make all`.
+- A commit-msg hook (`make hooks`) and a GitHub workflow (`.github/workflows/methods-doc.yml`)
+  reject commits that change `scripts/`, `R/lib/`, `resources/` or `env/renv.lock` without
+  `docs/methods.md`, unless the message has a `Methods-unchanged: <reason>` line.
+- `CLAUDE.md` gives the update procedure to anyone (or any assistant) editing the code.
+
+### Changes that affect numbers
+
+1. **Label-permutation null (`04_expression_outcome/02_gse26549_transformation.R`).** The
+   shuffle was drawn inside the per-gene correlation, so every gene was correlated with a
+   different permutation of the 15 training labels. That does not preserve the correlation
+   between genes, which is what a permutation null must keep. The labels are now shuffled once
+   per iteration and every gene is correlated with the same shuffled labels.
+2. **Empirical P values include the observed statistic:** (k + 1)/(n + 1) instead of k/n, as
+   the pilot lesion-programme null already did. The random-set pool also now excludes genes
+   without a defined training correlation, i.e. it is the pool the proxy is chosen from.
+   Effect of 1 and 2: random-set / label-permutation empirical P 0.027 / 0.017 becomes
+   0.028 / 0.020. The proxy still outperforms 97% and 98% of the null proxies.
+3. **conumee2 segmentation is seeded (`01_gse204943/04_copy_number_conumee2.R`).** DNAcopy
+   assesses change points by permutation; `set.seed(1)` is now called before each sample.
+   Effect: 3,528 segments instead of 3,526; one arm-level value in
+   `gse204943_cn_vs_methylome.csv` moves by 0.001. No quoted number changes.
+
+### Changes that do not affect numbers
+
+- **P values on figures were truncated, not rounded.** `ptxt()` in both figure scripts now
+  rounds values of 0.1 or more to two decimals and keeps two significant figures below that.
+  Fig. 6f now shows P = 0.27 for the pilot lesion programme (it showed 0.26; the text and the
+  audit give 0.27).
+- **Script headers corrected** where they described the code inaccurately:
+  - conumee2 uses `preprocessIllumina` with its defaults (background correction and control
+    normalisation);
+  - cell-composition and PMD-block headers;
+  - audit and integrity script headers.
+- `04_rna_analyses.R`: programme deltas carry clean sample names (`unname`).
+- `03_rna_methylation_validation.R`: the printed P3 immune fraction is computed, not typed.
+- `03_manuscript_numbers.R` lists two more values used in the Methods: the number and size of
+  the GSE204943 PMD blocks, and the RNA arm-dosage noise floor. Rounding uses `signif()` first.
+  Rows with a missing leave-patient-out copy number are excluded from the dosage comparison.
+- `01_results_audit.R` expects the new empirical P values.
+
+### Manuscript files updated (10 Oct 2026)
+
+Empirical *P* values 0.027 / 0.017 replaced by 0.028 / 0.020 in both Markdown manuscripts. The
+Methods now state that empirical *P* = (*k* + 1)/(*n* + 1). Both .docx files were rebuilt and Figs 3,
+4 and 6 replaced. The previous versions are in
+`analysis/output/figures_nature/archive_pre_methods_fixes_2026-10-10/`.
+
 ## 2026-10 Repository assembled from the analysis folder
 
 ### Script mapping

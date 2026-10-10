@@ -5,8 +5,8 @@
 ##                 joined through the IDAT barcode (GEO series matrix)
 ##   C. quality    detection-P failures and median intensity per array
 ##   D. sex        recorded sex vs the data: Y-chromosome intensity (two-cluster split of
-##                 median log2 Y minus X intensity) and X CpG-island methylation (two active X
-##                 copies, one inactivated, give mean beta > 0.3 in females). minfi::getSex is not
+##                 median log2 Y minus X intensity) and X CpG-island methylation (X inactivation
+##                 gives intermediate island methylation, mean beta > 0.3, in females). minfi::getSex is not
 ##                 used: its fixed cutoff mis-calls many females in this noob-normalised set.
 ##   E. identity   genotype concordance on the 59 SNP probes; pairs > 0.85 would indicate the same
 ##                 individual twice
@@ -14,7 +14,8 @@
 ##                 look like another group; tumour-like OPLs are expected to resemble OSCC)
 ##   G. robustness the tumour signature re-derived without sex-discordant OSCCs and without OSCCs
 ##                 scoring in the healthy range: OPL scores, OPL groups and pilot shifts
-##                 (same model as 03_methylation_cohorts/01 and 06_audit/02 section B)
+##                 (same limma model as 03_methylation_cohorts/01, with group means re-estimated
+##                 without the dropped samples)
 ##
 ## Inputs : <gse>/crucial_objects, <gse>/intermediate (stage 01), GEO series matrix and file list
 ##          next to the GSE204943 sample sheet (scripts/00_download), signature and pilot betas.

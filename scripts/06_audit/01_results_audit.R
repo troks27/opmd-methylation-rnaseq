@@ -38,7 +38,7 @@ kz_cpg <- setNames(lapply(KZFP, function(g) rownames(ann_g)[is_prom_cgi & vapply
 pmd <- read_csv(file.path(GSE_DIR, "results/hypo_PMD_blocks.csv"), show_col_types = FALSE)
 in_blocks <- overlapsAny(GRanges(ann_g$chr, IRanges(ann_g$pos, width = 1)), GRanges(pmd$seqnames, IRanges(pmd$start, pmd$end)))
 pmd_cpg <- rownames(ann_g)[in_blocks & ann_g$Relation_to_Island == "OpenSea"]
-## any CpG in a chr19 KZFP cluster (19p12-p13 and 19q13) annotated to a ZNF gene
+## any chr19 CpG annotated to a gene named ZNF*, ZFP*, ZSCAN* or ZIK* (no position or promoter limit)
 znf_any <- rownames(ann_g)[ann_g$chr == "chr19" & vapply(gl, function(x) any(grepl("^ZNF|^ZFP|^ZSCAN|^ZIK", x)), logical(1))]
 
 ## ================================================================== A. circularity
@@ -49,7 +49,8 @@ ov <- tibble(set = c("KZFP promoter CpGs (5 genes)", "any chr19 ZNF-annotated Cp
              in_hyper = c(sum(unique(unlist(kz_cpg)) %in% ext$tum_hyper), sum(znf_any %in% ext$tum_hyper), sum(pmd_cpg %in% ext$tum_hyper)),
              in_hypo = c(sum(unique(unlist(kz_cpg)) %in% ext$tum_hypo), sum(znf_any %in% ext$tum_hypo), sum(pmd_cpg %in% ext$tum_hypo)))
 cat("A. Overlap of feature CpGs with the 4,000-CpG signature:\n"); print(ov)
-## leave-out score: drop all chr19 ZNF CpGs, all PMD-block CpGs and all open-sea CpGs
+## leave-out score: drop all chr19 ZNF CpGs and all open-sea CpGs (which include every open-sea
+## CpG in a PMD block, the CpGs the PMD index uses)
 drop <- unique(c(znf_any, pmd_cpg, rownames(ann_g)[ann_g$Relation_to_Island == "OpenSea"]))
 h2 <- setdiff(ext$tum_hyper, drop); o2 <- setdiff(ext$tum_hypo, drop)
 score <- function(B, cpgs) { s <- sig[match(cpgs, sig$cpg), ]
@@ -202,8 +203,8 @@ add("conumee vs aCGH arm-level r / per-lesion median r", "0.88 / 0.90",
 kz <- g26$kz
 add("ZNF471 / ZNF582 / ZNF671 low expression HR (per SD lower)", "1.70 / 1.89 / 2.0",
     paste(sprintf("%.2f", 1 / kz$HR_per_SD_expression[match(c("ZNF471", "ZNF582", "ZNF671"), kz$gene)]), collapse = " / "), TRUE)
-add("Random-signature / label-permutation empirical p", "0.027 / 0.017", sprintf("%.3f / %.3f", g26$emp_rand, g26$emp_perm),
-    round(g26$emp_rand, 3) == 0.027 & round(g26$emp_perm, 3) == 0.017)
+add("Random-signature / label-permutation empirical p", "0.028 / 0.020", sprintf("%.3f / %.3f", g26$emp_rand, g26$emp_perm),
+    round(g26$emp_rand, 3) == 0.028 & round(g26$emp_perm, 3) == 0.020)
 add("Proxy fails to replicate in GSE227919", "AUC 0.55", sprintf("AUC %.2f (p %.2f)", g26$rep2$prog_AUC, g26$rep2$prog_p), TRUE,
     "reported as a negative result")
 p5 <- cnv$del9 |> filter(Sample %in% c("P5-Lesion", "P4-Lesion", "P3-Adj"))

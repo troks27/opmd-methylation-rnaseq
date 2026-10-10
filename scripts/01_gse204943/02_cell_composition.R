@@ -1,7 +1,8 @@
 ## Stage 01 / step 2. GSE204943 cell composition with EpiDISH.
 ##
 ## Robust partial correlation (RPC) against the centEpiFibIC reference (epithelial,
-## fibroblast and immune cells; Zheng et al. 2018), using all CpGs of the beta matrix.
+## fibroblast and immune cells; Zheng et al. 2018). EpiDISH uses the reference CpGs (716) that
+## are present in the beta matrix.
 ## Input : <outputs>/gse204943/crucial_objects/{beta.rds, pd.rds}
 ## Output: <outputs>/gse204943/results/cell_type_proportions.csv
 ##         columns Epithelial, Fibroblast, Immune, Sample (= Basename), Group (Sample_Group), Group_Label

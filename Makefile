@@ -56,7 +56,7 @@ INTEGRITY    := $(EXT)/tables/integrity_gse204943_summary.csv
 FIG1_4       := $(FIGDIR)/Fig1.pdf
 FIG5_6       := $(FIGDIR)/Fig5.pdf
 
-.PHONY: help all methylation cohorts outcome rnaseq audit figures gse204943 download kallisto exploratory clean-outputs
+.PHONY: help all methylation cohorts outcome rnaseq audit figures gse204943 download kallisto exploratory clean-outputs methods-check hooks
 
 help:
 	@echo "Stages (see README.md and docs/pipeline.md):"
@@ -71,9 +71,11 @@ help:
 	@echo "  make figures      07  Figs 1-6, Supplementary Figs 1-3 (PDF + PNG)"
 	@echo "  make all          stages 02-07"
 	@echo "  make exploratory  pilot paired DMP/DMR candidates (not in the manuscript)"
+	@echo "  make methods-check  docs/methods.md covers every script and quotes current values"
+	@echo "  make hooks        enable the commit check for docs/methods.md (once per clone)"
 	@echo "Outputs: $(OUT)   (set in config/paths.yml)"
 
-all: figures audit
+all: figures audit methods-check
 
 # ------------------------------------------------------------------ 00 download
 download:
@@ -154,6 +156,14 @@ $(FIG5_6): $(S)/07_figures/02_figures_5_6.R $(RNASTORY) $(RNAVALID) $(G26549) $(
 	$(R) $<
 
 # ------------------------------------------------------------------ housekeeping
+# docs/methods.md must describe every script and quote the current data-derived values
+methods-check: $(NUMBERS)
+	python3 tools/check_methods_doc.py coverage
+	python3 tools/check_methods_doc.py values
+# block commits that change analysis code without updating docs/methods.md (once per clone)
+hooks:
+	git config core.hooksPath .githooks
+	@echo "commit-msg hook enabled (.githooks/commit-msg)"
 clean-outputs:
 	@echo "This deletes $(OUT)/extended and $(OUT)/figures_nature (not stage 01 or RNA-seq outputs)."
 	@read -p "Continue? [y/N] " a; [ "$$a" = y ] && rm -rf $(EXT) $(FIGDIR) || echo "Cancelled."

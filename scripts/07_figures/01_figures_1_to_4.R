@@ -72,9 +72,9 @@ save_nat <- function(p, name, h_mm, w_mm = 183) {
 sup <- c("-" = "\u207b", "0" = "\u2070", "1" = "\u00b9", "2" = "\u00b2", "3" = "\u00b3", "4" = "\u2074",
          "5" = "\u2075", "6" = "\u2076", "7" = "\u2077", "8" = "\u2078", "9" = "\u2079")
 ptxt <- function(pv) vapply(pv, function(x) {
-  if (x < 0.001) { e <- floor(log10(x)); m <- x / 10^e
+  if (x < 0.001) { xs <- signif(x, 2); e <- floor(log10(xs)); m <- xs / 10^e
     sprintf("%.1f \u00d7 10%s", m, paste(sup[strsplit(as.character(e), "")[[1]]], collapse = "")) }
-  else if (x >= 0.1) sprintf("%.2f", floor(x * 100) / 100) else formatC(signif(x, 2), format = "fg", digits = 2) }, "")
+  else if (x >= 0.1) sprintf("%.2f", round(x, 2)) else formatC(signif(x, 2), format = "fg", digits = 2, flag = "#") }, "")
 ORD <- c("P2-NAT", "P2-Tumor", "P3-Adj", "P3-Lesion", "P4-Adj", "P4-Lesion", "P5-Adj", "P5-Lesion")
 own_adj <- c(`P2-Tumor` = "P2-NAT", `P3-Lesion` = "P3-Adj", `P4-Lesion` = "P4-Adj", `P5-Lesion` = "P5-Adj")
 tissue_of <- function(s) ifelse(grepl("Adj|NAT", s), "Adjacent", ifelse(grepl("Tumor", s), "Tumour", "Lesion"))

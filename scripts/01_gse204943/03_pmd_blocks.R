@@ -1,7 +1,8 @@
 ## Stage 01 / step 3. GSE204943 partially methylated domain (PMD) blocks and per-sample erosion.
 ##
-## 1. Blocks. CpGs are collapsed into clusters (minfi::cpgCollapse) and long hypomethylated
-##    blocks are called with minfi::blockFinder on open-sea clusters, comparing OPL + OSCC
+## 1. Blocks. CpGs are collapsed into clusters (minfi::cpgCollapse) and hypomethylated blocks
+##    (no minimum length is imposed) are called with minfi::blockFinder on open-sea clusters
+##    of all chromosomes, comparing OPL + OSCC
 ##    ("Case") with healthy mucosa ("Control") on the beta scale (cutoff 0.10, smoothing on).
 ##    Blocks with a negative smoothed Case - Control difference are kept.
 ## 2. Per-sample erosion, computed on individual CpGs:

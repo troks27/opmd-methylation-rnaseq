@@ -2,7 +2,8 @@
 ## as in the text, in reading order. After any change to the analysis, rerun (make audit) and
 ## compare the new table with the previous one; changed rows are the sentences to update:
 ##   Rscript tools/compare_tables.R <old>/extended/tables <new>/extended/tables
-## This script computes nothing new; it only reads values produced by stages 01-06.
+## It reads values produced by stages 01-06. A few summary statistics are computed here from saved
+## tables (e.g. correlations of saved scores, PCA distances, group medians), as noted per line.
 ## Output: <outputs>/extended/tables/manuscript_numbers.csv (section, statement, value)
 ##
 ## Run from the repository root:  Rscript scripts/06_audit/03_manuscript_numbers.R  (or make audit)
@@ -21,7 +22,7 @@ add <- function(section, statement, value) N[[length(N) + 1]] <<- tibble(section
 f1 <- function(x) sprintf("%.1f", x); f2 <- function(x) sprintf("%.2f", x); f3 <- function(x) sprintf("%.3f", x)
 pc0 <- function(x) sprintf("%.0f%%", 100 * x); sg <- function(x, d = 2) formatC(signif(x, d), format = "g")
 rng <- function(x, f = f2) paste(f(min(x)), "to", f(max(x)))
-sx <- function(x) { e <- floor(log10(x)); sprintf("%.1f x 10^%d", x / 10^e, e) }
+sx <- function(x) { x <- signif(x, 2); e <- floor(log10(x)); sprintf("%.1f x 10^%d", x / 10^e, e) }
 big <- function(x) format(x, big.mark = ",")
 sample_of <- function(s, x) x[match(s, names(x))]
 
@@ -139,7 +140,7 @@ for (s9 in c("P4-Lesion", "P5-Lesion")) { x9 <- n9 |> filter(sample == s9)
 add("R6", "all three 9p21 genes higher than adjacent: P2 / P6 / P7",
     paste(sapply(c("P2-Tumor", "P6-Lesion", "P7-Lesion"), function(s9) all(n9$log2FC_vs_own_adj[n9$sample == s9 & n9$gene %in% g9] > 0)), collapse = " / "))
 ev <- read_csv(file.path(REPO_ROOT, "resources", "cnv_events_curated.csv"), show_col_types = FALSE)
-dl <- function(s, a) mean(tb("rnaseq_arm_dosage_vs_cn_lpo.csv") |> filter(sample == s, arm_label %in% a) |> pull(rna_lpo))
+dl <- function(s, a) mean(tb("rnaseq_arm_dosage_vs_cn_lpo.csv") |> filter(!is.na(cn_lpo), sample == s, arm_label %in% a) |> pull(rna_lpo))   # as in Fig. 5f
 rna_call <- function(s, arms, dir) { if (is.na(arms)) return(NA_character_); v <- dl(s, strsplit(arms, ";")[[1]])
   if ((dir == "loss" && v < -rs$floor99) || (dir == "gain" && v > rs$floor99)) "Detected" else "Not detected" }
 ev <- ev |> mutate(rna = coalesce(rna, pmap_chr(list(sample, arms, direction), rna_call)))
@@ -181,6 +182,9 @@ add("R8", "lesion programme, GSE227919: rho with grade (P); progression AUC (P)"
             wilcox.test(rs$prog27[pr7][yv7], rs$prog27[pr7][!yv7], exact = FALSE)$p.value))
 
 ## ------------------------------------------------------------------ Methods
+pmdb <- read_csv(file.path(GSE_DIR, "results", "hypo_PMD_blocks.csv"), show_col_types = FALSE)
+add("Methods", "GSE204943 hypomethylated PMD blocks: number; total Mb", sprintf("%d; %.1f", nrow(pmdb), sum(pmdb$width) / 1e6))
+add("Methods", "RNA arm-dosage noise floor (99th percentile of absolute dosage in adjacent tissues)", f2(rs$floor99))
 gb <- readRDS(file.path(GSE_DIR, "crucial_objects", "beta.rds"))
 add("Methods", "GSE204943 CpGs and samples after detection-P filtering", paste(big(nrow(gb)), "CpGs;", ncol(gb), "samples")); rm(gb)
 sx_sig <- tb("verification_sex_adjusted_signature.csv"); pm <- tb("verification_pmd_tumour_only_blocks.csv")

@@ -45,8 +45,8 @@ save_nat <- function(p, name, h_mm, w_mm = 183) {
 sup <- c("-" = "⁻", "0" = "⁰", "1" = "¹", "2" = "²", "3" = "³", "4" = "⁴", "5" = "⁵",
          "6" = "⁶", "7" = "⁷", "8" = "⁸", "9" = "⁹")
 ptxt <- function(pv) vapply(pv, function(x) { if (is.na(x)) return("")
-  if (x < 0.001) { e <- floor(log10(x)); m <- x / 10^e; sprintf("%.1f × 10%s", m, paste(sup[strsplit(as.character(e), "")[[1]]], collapse = "")) }
-  else if (x >= 0.1) sprintf("%.2f", floor(x * 100) / 100) else formatC(signif(x, 2), format = "fg", digits = 2) }, "")
+  if (x < 0.001) { xs <- signif(x, 2); e <- floor(log10(xs)); m <- xs / 10^e; sprintf("%.1f × 10%s", m, paste(sup[strsplit(as.character(e), "")[[1]]], collapse = "")) }
+  else if (x >= 0.1) sprintf("%.2f", round(x, 2)) else formatC(signif(x, 2), format = "fg", digits = 2, flag = "#") }, "")
 SH_T <- c(Adjacent = 21, Lesion = 24, Tumour = 22)
 FILL_T <- c(Adjacent = "white", Lesion = C_O, Tumour = C_T)
 tissue_of <- function(s) ifelse(grepl("Adj|NAT", s), "Adjacent", ifelse(grepl("Tumor", s), "Tumour", "Lesion"))
@@ -96,7 +96,7 @@ f5c <- ggplot(hm, aes(sample, prog, fill = z)) + geom_tile(colour = "white", lin
   scale_x_discrete(position = "top") + labs(x = NULL, y = NULL) + theme_nat() +
   theme(axis.line = element_blank(), axis.ticks = element_blank(), axis.text.x.top = element_text(angle = 45, hjust = 0, vjust = 0),
         legend.key.height = unit(5, "mm"), legend.key.width = unit(1.6, "mm"))
-## d. 9p21 expression
+## 9p21 expression (object f5d; tagged e in the layout below)
 c9 <- read_csv(TAB("rnaseq_9p21.csv"), show_col_types = FALSE) |> filter(gene %in% c("MTAP", "CDKN2A", "CDKN2B")) |>
   mutate(evidence = case_when(sample == "P5-Lesion" ~ "Array and exome deletion", sample == "P4-Lesion" ~ "Array deletion only",
                               sample == "P2-Tumor" ~ "No array deletion", TRUE ~ "No methylation array"),
@@ -111,7 +111,7 @@ f5d <- ggplot(c9, aes(gene, log2FC_vs_own_adj, group = sample, colour = evidence
   scale_colour_manual(values = EV) + scale_x_discrete(expand = expansion(add = c(0.3, 1.1))) + scale_y_continuous(labels = ML) +
   labs(x = NULL, y = "Expression change vs own adjacent\n(log₂ fold change)", colour = "9p21 call") +
   theme_nat() + theme(axis.text.x = element_text(face = "italic"), legend.position = "bottom") + guides(colour = guide_legend(ncol = 2, title.position = "top"))
-## e. arm dosage: RNA vs array, both against other patients' adjacent tissue
+## arm dosage: RNA vs array, both against other patients' adjacent tissue (object f5e; tagged d)
 lpo <- read_csv(TAB("rnaseq_arm_dosage_vs_cn_lpo.csv"), show_col_types = FALSE) |> filter(!is.na(cn_lpo))
 show_s <- c("P2-Tumor", "P4-Adj", "P4-Lesion", "P5-Lesion")
 key_arms <- list(`P2-Tumor` = c("20p", "20q", "4q", "3p"), `P4-Adj` = c("12p", "12q"), `P4-Lesion` = c("12p", "12q"), `P5-Lesion` = c("3p", "13q"))

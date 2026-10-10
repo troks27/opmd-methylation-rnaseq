@@ -184,16 +184,21 @@ size_tab <- bind_rows(size_tab,
   tibble(k_each = NA, HR = cox_p(-colMeans(Z[dn, ]))["HR"], p = cox_p(-colMeans(Z[dn, ]))["p"], note = "down genes only (sign-flipped)"))
 cat("\nSize sensitivity:\n"); print(size_tab |> mutate(across(where(is.numeric), ~ signif(.x, 2))))
 
-## (4) random-signature null: 1000 random 50/50 sets from the same training gene pool
+## Empirical P values are (number of null P <= observed P + 1) / (iterations + 1).
+emp_p <- function(null, observed) (sum(null <= observed) + 1) / (length(null) + 1)
+## (4) random-signature null: 1000 random 50/50 sets from the training gene pool (genes with a
+##     defined training correlation, i.e. the genes the proxy itself is chosen from)
 set.seed(11)
-pool <- names(pool_rho)
+pool <- names(pool_rho)[!is.na(pool_rho)]
 rand_p <- replicate(1000, { u <- sample(pool, 50); v <- sample(setdiff(pool, u), 50)
   cox_p(colMeans(Z[u, ]) - colMeans(Z[v, ]))["p"] })
-emp_rand <- mean(rand_p <= obs["p"])
-## (5) full-pipeline label-permutation null: shuffle the 15 training labels, retrain, test
-perm_p <- replicate(1000, { rp <- apply(Etr, 1, function(v) suppressWarnings(cor(v, sample(tr$tumor_likeness), method = "spearman")))
+emp_rand <- emp_p(rand_p, obs["p"])
+## (5) full-pipeline label-permutation null: shuffle the training labels once per iteration,
+##     recompute every gene's correlation with the shuffled labels, rebuild the 50/50 proxy, test
+perm_p <- replicate(1000, { lab <- sample(tr$tumor_likeness)
+  rp <- apply(Etr, 1, function(v) suppressWarnings(cor(v, lab, method = "spearman")))
   rp <- rp[!is.na(rp)]; cox_p(proxy_from(rp, 50))["p"] })
-emp_perm <- mean(perm_p <= obs["p"])
+emp_perm <- emp_p(perm_p, obs["p"])
 cat(sprintf("\nObserved proxy p = %.2g. Random-signature null: %.1f%% of 1000 random 50/50 sets reach it (empirical p = %.3f).\nLabel-permutation null (retrain on shuffled methylome labels): empirical p = %.3f; median null p = %.2f\n",
             obs["p"], 100 * emp_rand, emp_rand, emp_perm, median(perm_p)))
 

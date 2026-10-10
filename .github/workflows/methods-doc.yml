@@ -1,0 +1,22 @@
+# Every pushed commit that changes analysis code must also update docs/methods.md, or say why
+# not ("Methods-unchanged: <reason>" in the commit message); every script must be described.
+name: methods document
+on:
+  push:
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: methods document covers the scripts and changes
+        env:
+          BEFORE: ${{ github.event.before || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            BEFORE="$HEAD_SHA~1"
+          fi
+          python3 tools/check_methods_doc.py range "$BEFORE" "$HEAD_SHA"

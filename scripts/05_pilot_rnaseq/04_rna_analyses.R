@@ -66,7 +66,7 @@ cells <- list(T_cell = c("CD3D", "CD3E", "CD2", "CD5", "CD6", "CD247"),
 sets <- c(cells, spatial)
 score <- sapply(sets, function(g) colMeans(zs[intersect(g, rownames(zs)), , drop = FALSE]))
 progA <- as_tibble(score, rownames = "sample") |> left_join(ss |> select(sample, patient, tissue, diagnosis), by = "sample")
-delta <- function(v) sapply(pairs, function(s) v[s] - v[adj_of[s]])
+delta <- function(v) sapply(pairs, function(s) unname(v[s] - v[adj_of[s]]))
 progA_delta <- as_tibble(apply(score, 2, delta), rownames = "sample")
 cat("\nA. Programme scores (z), sorted by proliferation\n")
 print(progA |> select(sample, Proliferation, pEMT, Invasive_epithelial, T_cell, B_cell, Plasma_cell, Cytotoxic, IFNG_response, Differentiation) |>

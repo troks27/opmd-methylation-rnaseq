@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks a commit that changes analysis code without updating docs/methods.md (unless the
+# message has a "Methods-unchanged: <reason>" line). Enable once per clone:  make hooks
+exec python3 tools/check_methods_doc.py staged "$1"

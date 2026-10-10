@@ -47,8 +47,9 @@ cat("\nB. RNA composition scores (z) vs methylation EpiDISH fractions\n"); print
 mm <- compB |> filter(!is.na(Epi_meth))
 cat(sprintf("Spearman RNA epithelial vs EpiDISH Epi: %.2f; RNA immune vs EpiDISH IC: %.2f (n = %d)\n",
             cor(mm$Epithelial, mm$Epi_meth, method = "spearman"), cor(mm$Immune, mm$IC_meth, method = "spearman"), nrow(mm)))
-cat(sprintf("P3-Lesion immune score rank: %d of %d (methylation: 78%% immune); lymphoid rank %d of %d\n",
-            rank(-compB$Immune)[compB$sample == "P3-Lesion"], nrow(compB), rank(-compB$Lymphoid)[compB$sample == "P3-Lesion"], nrow(compB)))
+cat(sprintf("P3-Lesion immune score rank: %d of %d (methylation: %.0f%% immune); lymphoid rank %d of %d\n",
+            rank(-compB$Immune)[compB$sample == "P3-Lesion"], nrow(compB), 100 * compB$IC_meth[compB$sample == "P3-Lesion"],
+            rank(-compB$Lymphoid)[compB$sample == "P3-Lesion"], nrow(compB)))
 write_csv(compB, TAB("rnaseq_composition_vs_epidish.csv"))
 
 ## ---------------------------------------------------------------- C. 9p21

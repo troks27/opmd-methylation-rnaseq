@@ -89,3 +89,4 @@ When `gse204943_objects` points to a frozen copy outside `<out>`, stage 01 is no
 |---|---|
 | `tools/compare_tables.R` | lists the tables (and columns) that differ between two output folders |
 | `tools/build_manuscript_docx.py` | formats a pandoc Markdown manuscript as a Nature Communications-style .docx |
+| `tools/check_methods_doc.py` | checks that `docs/methods.md` describes every script and quotes current values (`make methods-check`); used by the commit-msg hook (`make hooks`) and the GitHub workflow |
